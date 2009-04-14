@@ -1,0 +1,76 @@
+#!/usr/bin/env ruby
+require 'escape'
+require 'optparse'
+$integrated=0
+$error=0
+$unintegrated=0
+$totals=false
+options=OptionParser.new do |opts|
+  opts.banner = "Usage: find_dead_files [options] DEPOT_PATH"
+  opts.on("-t", "--totals", "print each file instead of totals") {$totals=true}
+  opts.on("-u", "--print-unintegrated", "print each unintegrated files as it's found") {$print_ui=true}
+  opts.on("-i", "--print-integrated", "print each integrated files as it's found") {$print_i=true}
+  opts.on("-s", "--silent", "don't show warnings") {$silent=true}
+  opts.on("-h", "--help", "Show this message") do
+    puts opts
+    exit
+  end
+end
+begin 
+  options.parse!(ARGV) 
+rescue OptionParser::MissingArgument => e
+  puts "Error parsing your options!"
+  puts e.message
+  exit
+end
+unless $root=ARGV.shift.dup
+  puts "Must specify a default depot path!"
+  puts options
+end
+$root.chomp!('...')
+$root.chomp!('/')
+
+unless $totals or $print_ui or $print_i
+  puts "Either choose -t or -u, otherwise whats the point?"
+  exit
+end
+def fix_path(path)
+  raise "unknown path #{path}" unless path=~/^(.*)(\/)?$/
+  ret= escape($1) + "/*"
+  return ret
+end
+def escape(path)
+  Escape.shell_command([path]).to_s
+end
+def parse_file file
+  file=escape(file)
+  p4_ints=`p4 integrated '#{file}' 2>/dev/null | wc -l`.to_i
+  if p4_ints.to_i==0
+    $error+=1
+    STDERR.puts "WARNING:  #{file} has no integration history!" unless $silent
+  elsif p4_ints.to_i>1
+    puts file if $print_i
+    $integrated+=1
+  else
+    puts file if $print_ui
+    $unintegrated+=1
+  end
+end
+def parse_dir path
+  path=fix_path(path)
+  dirs=`p4 dirs '#{path}' 2>/dev/null`.split(/\n/)
+  files=`p4 files '#{path}' 2>/dev/null`.split(/\n/)
+  files.map!{|f|f.split(/#/).first}
+  files.each{|f|parse_file(f)}
+  dirs.each{|dir|parse_dir(dir)}
+end
+
+begin
+  parse_dir($root)
+ensure
+  if $totals
+    puts "error : #{$error}"
+    puts "unintegrated : #{$unintegrated}"
+    puts "integrated   : #{$integrated}"
+  end
+end
